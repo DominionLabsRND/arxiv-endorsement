@@ -8,10 +8,17 @@ on:
       - ".github/workflows/validate-requests.yml"
       - "README.md"
   push:
+    branches:
+      - main
     paths:
       - "requests/*.txt"
       - "scripts/validate_request_files.py"
       - ".github/workflows/validate-requests.yml"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to (re-)validate, e.g. if GitHub failed to trigger the check automatically"
+        required: false
 
 jobs:
   validate:
@@ -20,6 +27,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pr_number && format('refs/pull/{0}/head', inputs.pr_number) || '' }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
