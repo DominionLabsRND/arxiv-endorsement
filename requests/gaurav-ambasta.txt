@@ -1,0 +1,4 @@
+LinkedIn: https://www.linkedin.com/in/gauravambasta/
+Paper: https://zenodo.org/records/22124148/files/AmbastaDecentralizedOwnershipCentralizedEnforcement.pdf?download=1
+Subject: cs.SE
+EndorsementCode: 8S3YOO
