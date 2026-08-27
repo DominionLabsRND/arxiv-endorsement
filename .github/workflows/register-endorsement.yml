@@ -50,6 +50,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.merge_sha }}
+          # Safe: the previous step already verified this PR is merged into the
+          # default branch, so merge_sha is base-repo history, not fork-controlled code.
+          allow-unsafe-pr-checkout: true
 
       - name: Locate the new endorsement request
         id: request
