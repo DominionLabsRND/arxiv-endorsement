@@ -54,6 +54,16 @@ jobs:
           # default branch, so merge_sha is base-repo history, not fork-controlled code.
           allow-unsafe-pr-checkout: true
 
+      - name: Use the maintained registration script
+        run: |
+          set -euo pipefail
+          # The request file comes from the merged revision above; the scripts
+          # run the latest reviewed version from the default branch instead of
+          # the possibly stale copy recorded in the merge commit.
+          default_branch="${{ github.event.repository.default_branch }}"
+          git fetch --depth=1 origin "$default_branch"
+          git checkout FETCH_HEAD -- scripts
+
       - name: Locate the new endorsement request
         id: request
         env:
