@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
@@ -25,6 +26,11 @@ LOGIN_URL = "https://arxiv.org/login?next_page=https%3A//arxiv.org/user"
 ENDORSE_URL = "https://arxiv.org/auth/endorse"
 USER_AGENT = "arxiv-endorsement-github-action/1.0"
 
+ALLOWED_SUBJECT = "cs.SE"
+# Matches e.g. "cs.SE (Software Engineering) subject category of arXiv" on the
+# confirmation page returned for an endorsement code.
+SUBJECT_RE = re.compile(r"\b([a-z-]+\.[A-Z-]+) \(([^)]+)\) subject category")
+
 
 class EndorsementFormParser(HTMLParser):
     """Extract the confirmation form's hidden endorsement code."""
@@ -39,6 +45,23 @@ class EndorsementFormParser(HTMLParser):
         attributes = dict(attrs)
         if attributes.get("name") == "x" and attributes.get("type") == "hidden":
             self.code = attributes.get("value")
+
+
+def confirm_subject(page: str, allowed: str = ALLOWED_SUBJECT) -> str | None:
+    """Return an error message when the confirmation page subject is wrong.
+
+    arXiv writes the requested subject both in the "subject category" phrase
+    (e.g. "cs.SE (Software Engineering) subject category of arXiv") and plain
+    mentions further down the page, so matching either keeps this robust
+    against small wording changes.
+    """
+    match = SUBJECT_RE.search(page)
+    subject = match.group(1) if match else None
+    if subject is not None and subject != allowed:
+        return f"arXiv endorsement code is for {subject}, not {allowed}"
+    if subject is None and not re.search(rf"\b{re.escape(allowed)}\b", page):
+        return "arXiv confirmation page does not mention the allowed cs.SE subject"
+    return None
 
 
 def read_fields(path: Path) -> dict[str, str]:
@@ -89,8 +112,9 @@ def main() -> int:
         form.feed(confirmation_page)
         if form.code != code:
             raise RuntimeError("arXiv did not return a confirmation form for this endorsement code")
-        if "cs.SE (Software Engineering)" not in confirmation_page:
-            raise RuntimeError("arXiv confirmation page does not match the allowed cs.SE subject")
+        subject_error = confirm_subject(confirmation_page)
+        if subject_error:
+            raise RuntimeError(subject_error)
 
         result_page = request(
             opener,

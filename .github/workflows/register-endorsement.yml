@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[].body')"
-          if rg -Fq '<!-- arxiv-endorsement-registered -->' <<< "$comments"; then
+          if grep -Fq '<!-- arxiv-endorsement-registered -->' <<< "$comments"; then
             echo "registered=true" >> "$GITHUB_OUTPUT"
           else
             echo "registered=false" >> "$GITHUB_OUTPUT"
