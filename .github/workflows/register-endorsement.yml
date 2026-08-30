@@ -86,14 +86,25 @@ jobs:
           fi
 
       - name: Register endorsement with arXiv
+        id: register
         if: steps.prior.outputs.registered != 'true'
         env:
           ARXIV_USERNAME: ${{ secrets.ARXIV_USERNAME }}
           ARXIV_PASSWORD: ${{ secrets.ARXIV_PASSWORD }}
         run: python scripts/endorse_merged_request.py "${{ steps.request.outputs.file }}"
 
+      - name: Ask for a reissued endorsement code on the pull request
+        if: failure() && steps.register.outputs.wrong_subject
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          WRONG_SUBJECT: ${{ steps.register.outputs.wrong_subject }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "<!-- arxiv-endorsement-wrong-subject -->
+          The arXiv endorsement code on the arXiv server is for **$WRONG_SUBJECT**, not **cs.SE**. Reissue a new endorsement code for **cs.SE** and open a new pull request with it."
+
       - name: Record successful registration on the pull request
-        if: steps.prior.outputs.registered != 'true'
+        if: steps.prior.outputs.registered != 'true' && success()
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}

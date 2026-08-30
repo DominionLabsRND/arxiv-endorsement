@@ -32,6 +32,15 @@ ALLOWED_SUBJECT = "cs.SE"
 SUBJECT_RE = re.compile(r"\b([a-z-]+\.[A-Z-]+) \(([^)]+)\) subject category")
 
 
+def write_action_output(name: str, value: str) -> None:
+    """Append a key=value pair to $GITHUB_OUTPUT when running on Actions."""
+    output_file = os.environ.get("GITHUB_OUTPUT")
+    if not output_file:
+        return
+    with open(output_file, "a", encoding="utf-8") as handle:
+        handle.write(f"{name}={value}\n")
+
+
 class EndorsementFormParser(HTMLParser):
     """Extract the confirmation form's hidden endorsement code."""
 
@@ -47,21 +56,24 @@ class EndorsementFormParser(HTMLParser):
             self.code = attributes.get("value")
 
 
-def confirm_subject(page: str, allowed: str = ALLOWED_SUBJECT) -> str | None:
-    """Return an error message when the confirmation page subject is wrong.
+def confirm_subject(page: str, allowed: str = ALLOWED_SUBJECT) -> tuple[str | None, str | None]:
+    """Return (error message, mismatching subject) for a wrong-subject page.
 
-    arXiv writes the requested subject both in the "subject category" phrase
-    (e.g. "cs.SE (Software Engineering) subject category of arXiv") and plain
-    mentions further down the page, so matching either keeps this robust
-    against small wording changes.
+    The second value is only set when arXiv explicitly states a subject
+    different from the allowed one, i.e. the requester must reissue their
+    endorsement code.  arXiv writes the requested subject both in the
+    "subject category" phrase (e.g. "cs.SE (Software Engineering) subject
+    category of arXiv") and plain mentions further down the page, so matching
+    either keeps this robust against small wording changes.
     """
     match = SUBJECT_RE.search(page)
     subject = match.group(1) if match else None
     if subject is not None and subject != allowed:
-        return f"arXiv endorsement code is for {subject}, not {allowed}"
+        message = f"arXiv endorsement code is for {subject}, not {allowed}"
+        return message, subject
     if subject is None and not re.search(rf"\b{re.escape(allowed)}\b", page):
-        return "arXiv confirmation page does not mention the allowed cs.SE subject"
-    return None
+        return "arXiv confirmation page does not mention the allowed cs.SE subject", None
+    return None, None
 
 
 def read_fields(path: Path) -> dict[str, str]:
@@ -112,7 +124,9 @@ def main() -> int:
         form.feed(confirmation_page)
         if form.code != code:
             raise RuntimeError("arXiv did not return a confirmation form for this endorsement code")
-        subject_error = confirm_subject(confirmation_page)
+        subject_error, wrong_subject = confirm_subject(confirmation_page)
+        if wrong_subject:
+            write_action_output("wrong_subject", wrong_subject)
         if subject_error:
             raise RuntimeError(subject_error)
 
