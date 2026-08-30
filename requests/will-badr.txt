@@ -1,4 +1,4 @@
 LinkedIn: https://www.linkedin.com/in/willbadr/
 Paper: https://raw.githubusercontent.com/wmlba/hints-help-but-do-they-teach/main/Hints_Help_But_Do_They_Teach.pdf
 Subject: cs.SE
-EndorsementCode: 9XJMRY
+EndorsementCode: RGJIGW
