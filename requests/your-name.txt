@@ -1,4 +1,5 @@
 LinkedIn: https://www.linkedin.com/in/your-profile
 Paper: https://example.org/your-paper.pdf
+Repo: https://github.com/your-username/your-paper-repo
 Subject: cs.SE
 EndorsementCode: A1B2C3

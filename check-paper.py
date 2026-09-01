@@ -11,6 +11,7 @@ Usage:
   ./check-paper.py https://github.com/owner/repo/pull/123
 """
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -136,6 +137,15 @@ def decode_arxiv_dates(text: str) -> str:
     return "\n".join(f"- arXiv:{arxiv_id} → {date}" for arxiv_id, date in sorted(seen.items()))
 
 
+def sha256_file(path: str) -> str:
+    """Return the hex SHA-256 checksum of a file's contents."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def pdf_to_text(pdf_path: str) -> str:
     """Extract text from PDF using pymupdf4llm (markdown-aware, best-in-class)."""
     result = pymupdf4llm.to_markdown(pdf_path)
@@ -146,9 +156,15 @@ def pdf_to_text(pdf_path: str) -> str:
 
 
 def evaluate_paper(text: str) -> dict:
+    response = claude_completions.completion(build_evaluation_payload(text))
+    return parse_evaluation_response(response)
+
+
+def build_evaluation_payload(text: str) -> dict:
+    """Build the OpenAI-compatible request used to evaluate a paper."""
     current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system_prompt = SYSTEM_PROMPT.replace("{current_date}", current_date)
-    payload = {
+    return {
         "max_tokens": MAX_TOKENS,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -158,7 +174,10 @@ def evaluate_paper(text: str) -> dict:
             },
         ],
     }
-    response = claude_completions.completion(payload)
+
+
+def parse_evaluation_response(response: dict) -> dict:
+    """Extract the JSON verdict from an OpenAI-compatible completion response."""
     raw = (response["choices"][0]["message"]["content"] or "").strip()
     # Strip accidental markdown fences if the model adds them
     if raw.startswith("```"):
@@ -240,6 +259,7 @@ def write_report(result: dict, pdf_path: str) -> Path:
         f"|---|---|",
         f"| **Date** | {date_str} |",
         f"| **Model** | {MODEL} |",
+        f"| **SHA-256** | `{sha256_file(pdf_path)}` |",
         f"| **Overall** | **{overall_str}** |",
         "",
         "## Gate results",

@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPO = "monperrus/arxiv-endorsement"
 COMMENT_MARKER = "<!-- arxiv-endorsement-check -->"
+BEST_EFFORT_COMPLETIONS = Path.home() / "bin" / "best-effort-completions.py"
 
 
 def load_module(path: Path, name: str):
@@ -68,7 +69,21 @@ def parse_fields(text: str) -> dict[str, str]:
     return fields
 
 
-def build_comment(result: dict, paper_url: str) -> str:
+def evaluate_paper(text: str) -> tuple[dict, str]:
+    """Evaluate via the fallback completion wrapper used for unattended PR reviews."""
+    proc = subprocess.run(
+        [sys.executable, str(BEST_EFFORT_COMPLETIONS)],
+        input=json.dumps(check_paper.build_evaluation_payload(text)),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    response = json.loads(proc.stdout)
+    model = response.get("best_effort", {}).get("model") or response.get("model") or "unknown"
+    return check_paper.parse_evaluation_response(response), model
+
+
+def build_comment(result: dict, paper_url: str, repo_url: str, model: str, checksum: str) -> str:
     gates = [
         ("gate1_is_scientific_paper", "Gate 1 — Scientific paper"),
         ("gate2_is_software_engineering", "Gate 2 — Software engineering topic"),
@@ -89,7 +104,9 @@ def build_comment(result: dict, paper_url: str) -> str:
         "## arXiv SE endorsement check (automated)",
         "",
         f"Paper: {paper_url}",
-        f"Model: {check_paper.MODEL}",
+        f"Repo: {repo_url}",
+        f"Model: {model}",
+        f"SHA-256: `{checksum}`",
         "",
         f"**Overall: {overall_str}**",
         "",
@@ -103,15 +120,15 @@ def build_comment(result: dict, paper_url: str) -> str:
     return "\n".join(lines)
 
 
-def post_comment(repo: str, pr_number: int, body: str, edit_last: bool = False) -> None:
+def post_comment(repo: str, pr_number: int, body: str) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
         f.write(body)
         body_path = f.name
     try:
-        args = ["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body-file", body_path]
-        if edit_last:
-            args += ["--edit-last", "--create-if-none"]
-        subprocess.run(args, check=True)
+        subprocess.run(
+            ["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body-file", body_path],
+            check=True,
+        )
     finally:
         Path(body_path).unlink(missing_ok=True)
 
@@ -142,6 +159,7 @@ def process_pr(repo: str, pr: dict, dry_run: bool, update: bool) -> None:
 
     fields = parse_fields(content)
     paper_url = fields["Paper"]
+    repo_url = fields.get("Repo", "(not provided — filed before Repo was required)")
     print(f"PR #{number}: checking {paper_url} …", file=sys.stderr)
 
     try:
@@ -150,28 +168,29 @@ def process_pr(repo: str, pr: dict, dry_run: bool, update: bool) -> None:
         print(f"PR #{number}: failed to download paper: {e}", file=sys.stderr)
         return
 
+    checksum = check_paper.sha256_file(str(tmp_pdf))
     try:
         text = check_paper.pdf_to_text(str(tmp_pdf))
-        result = check_paper.evaluate_paper(text)
+        result, model = evaluate_paper(text)
     except Exception as e:
         print(f"PR #{number}: evaluation failed: {e}", file=sys.stderr)
         return
     finally:
         tmp_pdf.unlink(missing_ok=True)
 
-    comment = build_comment(result, paper_url)
+    comment = build_comment(result, paper_url, repo_url, model, checksum)
     if dry_run:
         print(f"\n--- PR #{number} (dry run, not posted) ---\n{comment}\n")
     else:
-        post_comment(repo, number, comment, edit_last=was_commented)
-        print(f"PR #{number}: comment {'updated' if was_commented else 'posted'}", file=sys.stderr)
+        post_comment(repo, number, comment)
+        print(f"PR #{number}: comment posted", file=sys.stderr)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--dry-run", action="store_true", help="print comments instead of posting them")
-    parser.add_argument("--update", action="store_true", help="re-run and edit the existing check comment on already-checked PRs")
+    parser.add_argument("--update", action="store_true", help="re-run already-checked PRs and post a new check comment (does not edit prior comments)")
     args = parser.parse_args()
 
     for pr in list_open_prs(args.repo):

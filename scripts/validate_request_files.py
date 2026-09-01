@@ -11,8 +11,12 @@ from urllib.parse import urlparse
 
 VALID_SUBJECTS = {"cs.SE"}
 
-REQUIRED_FIELDS = ("LinkedIn", "Paper", "Subject", "EndorsementCode")
+REQUIRED_FIELDS = ("LinkedIn", "Paper", "Repo", "Subject", "EndorsementCode")
+# Requests filed before the Repo field became mandatory; grandfathered so
+# already-merged historical requests keep validating as-is.
+LEGACY_REQUIRED_FIELDS = ("LinkedIn", "Paper", "Subject", "EndorsementCode")
 ENDORSEMENT_CODE_RE = re.compile(r"^[A-Za-z0-9]{6}$")
+GITHUB_REPO_PATH_RE = re.compile(r"^/[\w.-]+/[\w.-]+(/.*)?$")
 
 
 def validate_https_url(value: str) -> bool:
@@ -29,13 +33,27 @@ def validate_linkedin(value: str) -> bool:
     return parsed.path.startswith("/in/") or parsed.path.startswith("/pub/")
 
 
+def validate_github_repo(value: str) -> bool:
+    if not validate_https_url(value):
+        return False
+    parsed = urlparse(value)
+    if parsed.netloc not in {"www.github.com", "github.com"}:
+        return False
+    return bool(GITHUB_REPO_PATH_RE.match(parsed.path))
+
+
 def parse_request_file(path: Path) -> list[str]:
     errors: list[str] = []
     lines = path.read_text(encoding="utf-8").splitlines()
 
-    if len(lines) != len(REQUIRED_FIELDS):
+    # Requests filed before Repo became mandatory have exactly the legacy
+    # field count; anything else must match the current schema.
+    required_fields = LEGACY_REQUIRED_FIELDS if len(lines) == len(LEGACY_REQUIRED_FIELDS) else REQUIRED_FIELDS
+
+    if len(lines) != len(required_fields):
         errors.append(
-            f"must contain exactly {len(REQUIRED_FIELDS)} non-empty lines in the documented format"
+            f"must contain exactly {len(REQUIRED_FIELDS)} non-empty lines in the documented format "
+            f"(or the legacy {len(LEGACY_REQUIRED_FIELDS)}-line format without Repo, for requests filed before it was required)"
         )
 
     fields: dict[str, str] = {}
@@ -54,7 +72,7 @@ def parse_request_file(path: Path) -> list[str]:
         value = value.strip()
         seen_names.append(name)
 
-        if name not in REQUIRED_FIELDS:
+        if name not in required_fields:
             errors.append(f"line {index}: unknown field '{name}'")
             continue
         if name in fields:
@@ -66,12 +84,12 @@ def parse_request_file(path: Path) -> list[str]:
 
         fields[name] = value
 
-    if seen_names and tuple(seen_names) != REQUIRED_FIELDS:
+    if seen_names and tuple(seen_names) != required_fields:
         errors.append(
-            "fields must appear exactly once and in this order: LinkedIn, Paper, Subject, EndorsementCode"
+            "fields must appear exactly once and in this order: " + ", ".join(required_fields)
         )
 
-    for field in REQUIRED_FIELDS:
+    for field in required_fields:
         if field not in fields:
             errors.append(f"missing field '{field}'")
 
@@ -84,6 +102,11 @@ def parse_request_file(path: Path) -> list[str]:
     paper = fields.get("Paper")
     if paper and not validate_https_url(paper):
         errors.append("Paper must be a public https:// URL")
+
+    if "Repo" in required_fields:
+        repo = fields.get("Repo")
+        if repo and not validate_github_repo(repo):
+            errors.append("Repo must be a public https://github.com/<owner>/<repo> URL")
 
     subject = fields.get("Subject")
     if subject and subject not in VALID_SUBJECTS:
