@@ -1,6 +1,5 @@
-Author: Vivek Kumar Singh
-Paper: ChurnBench: A Drift-Aware Benchmark Demonstrating That Refresh Scheduling, Not Cache Age, Governs Staleness in Agentic AI
-Repository: https://github.com/vsingh45/churnbench
-Paper PDF: https://github.com/vsingh45/churnbench/releases/download/v0.1-paper/churnbench-aixse.pdf
+LinkedIn: https://www.linkedin.com/in/vivek-kumar-singh-a8930376
+Paper: https://github.com/vsingh45/churnbench/releases/download/v0.1-paper/churnbench-aixse.pdf
+Repo: https://github.com/vsingh45/churnbench
 Subject: cs.SE
 EndorsementCode: BMVPST
