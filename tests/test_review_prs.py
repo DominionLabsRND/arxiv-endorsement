@@ -66,6 +66,39 @@ def test_wrong_subject_pr_is_answered_only_once(stubbed, monkeypatch):
     assert stubbed["comments"] == []
 
 
+def test_completion_prefers_sonnet_and_falls_back(monkeypatch, tmp_path):
+    sonnet = tmp_path / "claude-sonnet-5-completions.py"
+    fallback = tmp_path / "best-effort-completions.py"
+    for p in (sonnet, fallback):
+        p.write_text("")
+    monkeypatch.setattr(review_prs, "COMPLETION_BACKENDS", (sonnet, fallback))
+
+    tried: list[str] = []
+
+    class Proc:
+        def __init__(self, code, out):
+            self.returncode, self.stdout, self.stderr = code, out, ""
+
+    def fake_run(cmd, **kwargs):
+        name = Path(cmd[1]).name
+        tried.append(name)
+        if name.startswith("claude-sonnet"):
+            return Proc(1, "")  # e.g. 429 out of credits
+        return Proc(0, '{"model": "claude-haiku-4-5", "choices": []}')
+
+    monkeypatch.setattr(review_prs.subprocess, "run", fake_run)
+    response = review_prs.best_effort_completion({"messages": []})
+    assert tried == ["claude-sonnet-5-completions.py", "best-effort-completions.py"]
+    assert response["model"] == "claude-haiku-4-5"
+    assert "claude-haiku-4-5" in review_prs._MODELS_USED
+
+
+def test_completion_raises_when_every_backend_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(review_prs, "COMPLETION_BACKENDS", (tmp_path / "missing.py",))
+    with pytest.raises(RuntimeError, match="no completion backend succeeded"):
+        review_prs.best_effort_completion({"messages": []})
+
+
 def test_other_validation_errors_leave_the_pr_open(stubbed, monkeypatch):
     monkeypatch.setattr(review_prs, "fetch_file_content", lambda repo, path, ref: MALFORMED)
     review_prs.process_pr("owner/repo", PR, dry_run=False, update=False)

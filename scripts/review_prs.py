@@ -2,10 +2,11 @@
 """Run check-paper.py against each valid endorsement request PR and post the result as a PR comment.
 
 A request PR is "valid" when its requests/*.txt file passes scripts/validate_request_files.py.
-Skips PRs that already carry a check comment (idempotent).
+Skips PRs that already carry a check comment (idempotent). A request for a subject other
+than cs.SE is answered and closed.
 
 Usage:
-  ./scripts/review_prs.py [--repo owner/repo] [--dry-run]
+  ./scripts/review_prs.py [--repo owner/repo] [--dry-run] [--pr N]
 """
 
 from __future__ import annotations
@@ -24,7 +25,13 @@ DEFAULT_REPO = "monperrus/arxiv-endorsement"
 COMMENT_MARKER = "<!-- arxiv-endorsement-check -->"
 WRONG_SUBJECT_MARKER = "<!-- arxiv-endorsement-wrong-subject -->"
 WRONG_SUBJECT_MESSAGE = "[automated reply] we only endorse for cs.SE"
-BEST_EFFORT_COMPLETIONS = Path.home() / "bin" / "best-effort-completions.py"
+# Sonnet 5 first: best-effort-completions.py starts with Haiku, whose gate verdicts
+# proved unstable across identical runs (same PDF checksum, opposite overall verdict).
+# best-effort stays as the fallback for when the Sonnet endpoint is out of credits.
+COMPLETION_BACKENDS = (
+    Path.home() / "bin" / "claude-sonnet-5-completions.py",
+    Path.home() / "bin" / "best-effort-completions.py",
+)
 
 
 def load_module(path: Path, name: str):
@@ -78,25 +85,39 @@ def parse_fields(text: str) -> dict[str, str]:
 
 
 _LAST_MODEL = "unknown"
+# Every model that answered while reviewing the current PR; a gate that fell back to
+# another backend must be visible in the posted comment.
+_MODELS_USED: list[str] = []
 
 
 def best_effort_completion(payload: dict) -> dict:
-    """Run a payload through the fallback completion wrapper used for unattended reviews."""
+    """Complete a payload with the first backend that answers, Sonnet 5 first."""
     global _LAST_MODEL
-    proc = subprocess.run(
-        [sys.executable, str(BEST_EFFORT_COMPLETIONS)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    response = json.loads(proc.stdout)
-    _LAST_MODEL = response.get("best_effort", {}).get("model") or response.get("model") or _LAST_MODEL
-    return response
+    errors = []
+    for backend in COMPLETION_BACKENDS:
+        if not backend.exists():
+            errors.append(f"{backend.name}: not found")
+            continue
+        proc = subprocess.run(
+            [sys.executable, str(backend)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            errors.append(f"{backend.name}: {(proc.stderr or proc.stdout).strip()[:200]}")
+            print(f"  {backend.name} failed, trying next backend", file=sys.stderr)
+            continue
+        response = json.loads(proc.stdout)
+        _LAST_MODEL = response.get("best_effort", {}).get("model") or response.get("model") or _LAST_MODEL
+        if _LAST_MODEL not in _MODELS_USED:
+            _MODELS_USED.append(_LAST_MODEL)
+        return response
+    raise RuntimeError("no completion backend succeeded: " + "; ".join(errors))
 
 
 def evaluate_paper(text: str) -> tuple[dict, str]:
-    """Evaluate via the fallback completion wrapper used for unattended PR reviews."""
+    """Evaluate the paper gates and report which model actually answered."""
     response = best_effort_completion(check_paper.build_evaluation_payload(text))
     return check_paper.parse_evaluation_response(response), _LAST_MODEL
 
@@ -222,9 +243,10 @@ def process_pr(
         return
 
     checksum = check_paper.sha256_file(str(tmp_pdf))
+    _MODELS_USED.clear()
     try:
         text = check_paper.pdf_to_text(str(tmp_pdf))
-        result, model = evaluate_paper(text)
+        result, _ = evaluate_paper(text)
     except Exception as e:
         print(f"PR #{number}: evaluation failed: {e}", file=sys.stderr)
         return
@@ -239,7 +261,7 @@ def process_pr(
         except Exception as e:
             print(f"PR #{number}: repository check failed: {e}", file=sys.stderr)
 
-    comment = build_comment(result, paper_url, repo_label, model, checksum, repo_result)
+    comment = build_comment(result, paper_url, repo_label, ", ".join(_MODELS_USED) or "unknown", checksum, repo_result)
     if dry_run:
         print(f"\n--- PR #{number} (dry run, not posted) ---\n{comment}\n")
     else:

@@ -117,6 +117,17 @@ def test_traceability():
     assert check_repo.traceability([]) == (0, 0, 1.0)
 
 
+def test_empty_completion_names_the_token_budget():
+    response = {"choices": [{"finish_reason": "length", "message": {"content": ""}}], "usage": {"completion_tokens": 8192}}
+    with pytest.raises(RuntimeError, match="raise MAX_TOKENS"):
+        check_repo._parse_json_response(response)
+
+
+def test_payloads_use_a_budget_above_the_thinking_trap():
+    assert check_repo.build_claims_payload("x")["max_tokens"] == check_repo.MAX_TOKENS
+    assert check_repo.MAX_TOKENS >= 16384
+
+
 def test_check_repo_reports_unclonable_repository(monkeypatch):
     monkeypatch.setattr(check_repo, "clone_repo", lambda url, dest: (False, "repository not found"))
     result = check_repo.check_repo("https://github.com/owner/missing", "paper text", lambda payload: {})

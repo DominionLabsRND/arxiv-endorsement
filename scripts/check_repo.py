@@ -35,6 +35,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # Fraction of empirical claims that must be traceable to the repo for gate 4 to pass.
 DEFAULT_TRACEABILITY_THRESHOLD = 0.8
 
+# Sonnet 5 defaults to interleaved thinking on this endpoint and spends max_tokens on
+# thinking before emitting anything: a 60-claim verification burned all of 8192 on
+# reasoning and returned empty content with finish_reason "length". Both calls here are
+# long-output by nature (one JSON entry per claim), so keep this well above the visible
+# answer size.
+MAX_TOKENS = 32768
+
 CLONE_TIMEOUT = 300
 MAX_SCAN_FILE_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_FILES = 5
@@ -329,7 +336,7 @@ def scan_repo_for_values(root: Path, claims: list[dict]) -> dict[str, list[dict]
 # ---------------------------------------------------------------------------
 
 
-def build_claims_payload(paper_text: str, max_tokens: int = 8192) -> dict:
+def build_claims_payload(paper_text: str, max_tokens: int = MAX_TOKENS) -> dict:
     return {
         "max_tokens": max_tokens,
         "messages": [
@@ -340,7 +347,15 @@ def build_claims_payload(paper_text: str, max_tokens: int = 8192) -> dict:
 
 
 def _parse_json_response(response: dict) -> dict:
-    raw = (response["choices"][0]["message"]["content"] or "").strip()
+    choice = response["choices"][0]
+    raw = (choice["message"]["content"] or "").strip()
+    if not raw:
+        # Typically the whole budget went to thinking; say so instead of failing on
+        # an opaque "Expecting value: line 1 column 1".
+        raise RuntimeError(
+            f"empty completion (finish_reason={choice.get('finish_reason')}, "
+            f"usage={response.get('usage')}) — raise MAX_TOKENS"
+        )
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -373,7 +388,7 @@ def render_claims_block(claims: list[dict], hits: dict[str, list[dict]]) -> str:
 
 def build_verification_payload(
     repo_url: str, paper_text: str, inventory: dict, claims: list[dict],
-    hits: dict[str, list[dict]], max_tokens: int = 8192,
+    hits: dict[str, list[dict]], max_tokens: int = MAX_TOKENS,
 ) -> dict:
     files = inventory["files"]
     shown = files[:MAX_TREE_ENTRIES]
