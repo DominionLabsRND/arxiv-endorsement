@@ -244,7 +244,7 @@ def render_result(result: dict, pdf_path: str, repo_result: dict | None = None) 
         if not v:
             if repo_result.get("feedback"):
                 print(f"        → {repo_result['feedback']}")
-            print(f"        → {check_repo.RECOMMENDATIONS_URL}")
+            print(f"        → See <{check_repo.RECOMMENDATIONS_URL}>")
 
     print(f"\n{'─'*60}")
     if overall:

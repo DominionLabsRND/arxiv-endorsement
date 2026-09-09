@@ -526,9 +526,7 @@ def check_repo(
 
 def render_gate4(result: dict) -> str:
     """Markdown rendering of the gate 4 detail, shared by the report and PR comment."""
-    pointer = (
-        f"See [how to organize your paper and repository for verifiability]({RECOMMENDATIONS_URL})."
-    )
+    pointer = f"See <{RECOMMENDATIONS_URL}>"
     lines = []
     if not result.get("repo_accessible"):
         return f"> **Feedback:** {result.get('feedback','')} {pointer}\n"
