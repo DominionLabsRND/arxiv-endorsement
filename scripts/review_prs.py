@@ -33,6 +33,7 @@ def load_module(path: Path, name: str):
 
 
 check_paper = load_module(ROOT / "check-paper.py", "check_paper")
+check_repo = load_module(ROOT / "scripts" / "check_repo.py", "check_repo")
 validate_request_files = load_module(ROOT / "scripts" / "validate_request_files.py", "validate_request_files")
 
 
@@ -69,26 +70,35 @@ def parse_fields(text: str) -> dict[str, str]:
     return fields
 
 
-def evaluate_paper(text: str) -> tuple[dict, str]:
-    """Evaluate via the fallback completion wrapper used for unattended PR reviews."""
+_LAST_MODEL = "unknown"
+
+
+def best_effort_completion(payload: dict) -> dict:
+    """Run a payload through the fallback completion wrapper used for unattended reviews."""
+    global _LAST_MODEL
     proc = subprocess.run(
         [sys.executable, str(BEST_EFFORT_COMPLETIONS)],
-        input=json.dumps(check_paper.build_evaluation_payload(text)),
+        input=json.dumps(payload),
         capture_output=True,
         text=True,
         check=True,
     )
     response = json.loads(proc.stdout)
-    model = response.get("best_effort", {}).get("model") or response.get("model") or "unknown"
-    return check_paper.parse_evaluation_response(response), model
+    _LAST_MODEL = response.get("best_effort", {}).get("model") or response.get("model") or _LAST_MODEL
+    return response
 
 
-def build_comment(result: dict, paper_url: str, repo_url: str, model: str, checksum: str) -> str:
-    gates = [
-        ("gate1_is_scientific_paper", "Gate 1 — Scientific paper"),
-        ("gate2_is_software_engineering", "Gate 2 — Software engineering topic"),
-        ("gate3_passes_arxiv_quality", "Gate 3 — arXiv quality standards"),
-    ]
+def evaluate_paper(text: str) -> tuple[dict, str]:
+    """Evaluate via the fallback completion wrapper used for unattended PR reviews."""
+    response = best_effort_completion(check_paper.build_evaluation_payload(text))
+    return check_paper.parse_evaluation_response(response), _LAST_MODEL
+
+
+def build_comment(
+    result: dict, paper_url: str, repo_url: str, model: str, checksum: str,
+    repo_result: dict | None = None,
+) -> str:
+    gates = check_paper.GATES
 
     def verdict_md(v: bool) -> str:
         return "✓ PASS" if v else "✗ FAIL"
@@ -97,6 +107,8 @@ def build_comment(result: dict, paper_url: str, repo_url: str, model: str, check
         return {"high": "", "medium": " *(medium confidence)*", "low": " *(low confidence)*"}.get(c, "")
 
     overall = result.get("overall_verdict", all(result[k]["verdict"] for k, _ in gates))
+    if repo_result is not None:
+        overall = overall and repo_result["verdict"]
     overall_str = "✓ SUITABLE for arXiv cs.SE endorsement" if overall else "✗ NOT suitable for arXiv cs.SE endorsement"
 
     lines = [
@@ -116,7 +128,24 @@ def build_comment(result: dict, paper_url: str, repo_url: str, model: str, check
         lines.append(f"- {verdict_md(g['verdict'])} {label}{conf_md(g['confidence'])}")
         if not g["verdict"] and g.get("feedback"):
             lines.append(f"  - {g['feedback']}")
+
+    if repo_result is not None:
+        lines.append(
+            f"- {verdict_md(repo_result['verdict'])} {check_paper.GATE4_LABEL}"
+            f"{conf_md(repo_result.get('confidence', ''))}"
+        )
+        if repo_result.get("n_claims"):
+            lines.append(
+                f"  - {repo_result['n_backed']}/{repo_result['n_claims']} empirical numbers backed by a "
+                f"data file or a script ({repo_result['traceability']:.0%})"
+            )
+        lines += ["", "<details><summary>Gate 4 detail — traceability of the paper's numbers</summary>", ""]
+        lines.append(check_repo.render_gate4(repo_result))
+        lines += ["</details>", ""]
+
     lines += ["", result.get("summary", "")]
+    if repo_result is not None and repo_result.get("summary"):
+        lines += ["", repo_result["summary"]]
     return "\n".join(lines)
 
 
@@ -133,7 +162,10 @@ def post_comment(repo: str, pr_number: int, body: str) -> None:
         Path(body_path).unlink(missing_ok=True)
 
 
-def process_pr(repo: str, pr: dict, dry_run: bool, update: bool) -> None:
+def process_pr(
+    repo: str, pr: dict, dry_run: bool, update: bool,
+    skip_repo: bool = False, threshold: float = check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
+) -> None:
     number = pr["number"]
     txt_files = [f["path"] for f in pr["files"] if f["path"].startswith("requests/") and f["path"].endswith(".txt")]
     if not txt_files:
@@ -159,7 +191,8 @@ def process_pr(repo: str, pr: dict, dry_run: bool, update: bool) -> None:
 
     fields = parse_fields(content)
     paper_url = fields["Paper"]
-    repo_url = fields.get("Repo", "(not provided — filed before Repo was required)")
+    repo_url = fields.get("Repo")
+    repo_label = repo_url or "(not provided — filed before Repo was required)"
     print(f"PR #{number}: checking {paper_url} …", file=sys.stderr)
 
     try:
@@ -178,7 +211,15 @@ def process_pr(repo: str, pr: dict, dry_run: bool, update: bool) -> None:
     finally:
         tmp_pdf.unlink(missing_ok=True)
 
-    comment = build_comment(result, paper_url, repo_url, model, checksum)
+    repo_result = None
+    if repo_url and not skip_repo:
+        print(f"PR #{number}: checking repository {repo_url} …", file=sys.stderr)
+        try:
+            repo_result = check_repo.check_repo(repo_url, text, best_effort_completion, threshold)
+        except Exception as e:
+            print(f"PR #{number}: repository check failed: {e}", file=sys.stderr)
+
+    comment = build_comment(result, paper_url, repo_label, model, checksum, repo_result)
     if dry_run:
         print(f"\n--- PR #{number} (dry run, not posted) ---\n{comment}\n")
     else:
@@ -191,10 +232,20 @@ def main() -> None:
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--dry-run", action="store_true", help="print comments instead of posting them")
     parser.add_argument("--update", action="store_true", help="re-run already-checked PRs and post a new check comment (does not edit prior comments)")
+    parser.add_argument("--no-repo-check", action="store_true", help="skip gate 4 (open science repository)")
+    parser.add_argument(
+        "--traceability-threshold",
+        type=float,
+        default=check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
+        help="fraction of the paper's empirical numbers that must be backed by the repository",
+    )
     args = parser.parse_args()
 
     for pr in list_open_prs(args.repo):
-        process_pr(args.repo, pr, args.dry_run, args.update)
+        process_pr(
+            args.repo, pr, args.dry_run, args.update,
+            skip_repo=args.no_repo_check, threshold=args.traceability_threshold,
+        )
 
 
 if __name__ == "__main__":

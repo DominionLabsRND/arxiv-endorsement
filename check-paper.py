@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Check whether a PDF is suitable for arXiv endorsement in software engineering.
 
-Evaluates three gates:
+Evaluates four gates:
   1. Is it a scientific paper?
   2. Is it on a software engineering topic?
   3. Does it pass arXiv minimum quality standards?
+  4. Does the open science repository back every empirical number in the paper?
+
+Gate 4 runs only when a repository is known (--repo, or the Repo field of the
+request file in a PR).
 
 Usage:
-  ./check-paper.py paper.pdf
+  ./check-paper.py paper.pdf [--repo https://github.com/owner/repo]
   ./check-paper.py https://github.com/owner/repo/pull/123
 """
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -36,7 +41,9 @@ def _load_module(path: Path, name: str):
     return module
 
 
-download_zenodo = _load_module(Path(__file__).resolve().parent / "scripts" / "download_zenodo.py", "download_zenodo")
+_SCRIPTS = Path(__file__).resolve().parent / "scripts"
+download_zenodo = _load_module(_SCRIPTS / "download_zenodo.py", "download_zenodo")
+check_repo = _load_module(_SCRIPTS / "check_repo.py", "check_repo")
 claude_completions = _load_module(Path.home() / "bin" / "claude-sonnet-5-completions.py", "claude_sonnet_5_completions")
 
 MODEL = claude_completions.MODEL
@@ -187,7 +194,15 @@ def parse_evaluation_response(response: dict) -> dict:
     return json.loads(raw)
 
 
-def render_result(result: dict, pdf_path: str) -> None:
+GATES = [
+    ("gate1_is_scientific_paper", "Gate 1 — Scientific paper"),
+    ("gate2_is_software_engineering", "Gate 2 — Software engineering topic"),
+    ("gate3_passes_arxiv_quality", "Gate 3 — arXiv quality standards"),
+]
+GATE4_LABEL = "Gate 4 — Open science repository (numbers traceable)"
+
+
+def render_result(result: dict, pdf_path: str, repo_result: dict | None = None) -> None:
     PASS = "\033[32m✓ PASS\033[0m"
     FAIL = "\033[31m✗ FAIL\033[0m"
     WARN = "\033[33m~\033[0m"
@@ -202,14 +217,8 @@ def render_result(result: dict, pdf_path: str) -> None:
     print(f"  arXiv SE endorsement check — {Path(pdf_path).name}")
     print(f"{'─'*60}")
 
-    gates = [
-        ("gate1_is_scientific_paper", "Gate 1 — Scientific paper"),
-        ("gate2_is_software_engineering", "Gate 2 — Software engineering topic"),
-        ("gate3_passes_arxiv_quality", "Gate 3 — arXiv quality standards"),
-    ]
-
     all_pass = True
-    for key, label in gates:
+    for key, label in GATES:
         g = result[key]
         v = g["verdict"]
         if not v:
@@ -218,8 +227,24 @@ def render_result(result: dict, pdf_path: str) -> None:
         if not v and g.get("feedback"):
             print(f"        → {g['feedback']}")
 
-    print(f"\n{'─'*60}")
     overall = result.get("overall_verdict", all_pass)
+
+    if repo_result is not None:
+        v = repo_result["verdict"]
+        overall = overall and v
+        print(f"\n  {verdict_str(v)}  {GATE4_LABEL}{conf_str(repo_result.get('confidence', ''))}")
+        if repo_result.get("n_claims"):
+            print(
+                f"        {repo_result['n_backed']}/{repo_result['n_claims']} empirical numbers backed "
+                f"by a data file or a script ({repo_result['traceability']:.0%})"
+            )
+        for c in repo_result.get("claims", []):
+            if c["status"] == "not_found":
+                print(f"        {WARN} {c['value']}{(' ' + c['unit']) if c['unit'] else ''} — {c['claim']} ({c['location']})")
+        if not v and repo_result.get("feedback"):
+            print(f"        → {repo_result['feedback']}")
+
+    print(f"\n{'─'*60}")
     if overall:
         print(f"  \033[32m✓ OVERALL: SUITABLE for arXiv cs.SE endorsement\033[0m")
     else:
@@ -229,7 +254,7 @@ def render_result(result: dict, pdf_path: str) -> None:
     print(f"\n  I encourage to keep improving your research skills.\n")
 
 
-def write_report(result: dict, pdf_path: str) -> Path:
+def write_report(result: dict, pdf_path: str, repo_result: dict | None = None) -> Path:
     PASS_MD = "✓ PASS"
     FAIL_MD = "✗ FAIL"
 
@@ -243,13 +268,11 @@ def write_report(result: dict, pdf_path: str) -> Path:
     report_path = Path(f"analysis-{stem}.md")
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    gates = [
-        ("gate1_is_scientific_paper", "Gate 1 — Scientific paper"),
-        ("gate2_is_software_engineering", "Gate 2 — Software engineering topic"),
-        ("gate3_passes_arxiv_quality", "Gate 3 — arXiv quality standards"),
-    ]
+    gates = GATES
 
     overall = result.get("overall_verdict", all(result[k]["verdict"] for k, _ in gates))
+    if repo_result is not None:
+        overall = overall and repo_result["verdict"]
     overall_str = "✓ SUITABLE for arXiv cs.SE endorsement" if overall else "✗ NOT suitable for arXiv cs.SE endorsement"
 
     lines = [
@@ -275,11 +298,17 @@ def write_report(result: dict, pdf_path: str) -> Path:
             lines.append(f"> **Feedback:** {g['feedback']}")
             lines.append("")
 
+    if repo_result is not None:
+        lines.append(f"### {verdict_md(repo_result['verdict'])}  {GATE4_LABEL}{conf_md(repo_result.get('confidence', ''))}")
+        lines.append("")
+        lines.append(check_repo.render_gate4(repo_result))
+
     lines += [
         "## Summary",
         "",
         result.get("summary", ""),
         "",
+        *(([repo_result.get("summary", ""), ""]) if repo_result and repo_result.get("summary") else []),
         "I encourage you to keep improving your research skills.",
         "",
     ]
@@ -292,8 +321,8 @@ _SKIP_DOMAINS = {"linkedin.com", "github.com"}
 _PAPER_DOMAINS = {"doi.org", "zenodo.org", "arxiv.org"}
 
 
-def fetch_pr_paper_url(pr_url: str) -> str:
-    """Return the first paper URL found in the files of a GitHub PR."""
+def fetch_pr_urls(pr_url: str) -> tuple[str, str | None]:
+    """Return (paper URL, open science repo URL) found in the files of a GitHub PR."""
     m = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", pr_url)
     if not m:
         sys.exit(f"Invalid GitHub PR URL: {pr_url}")
@@ -308,10 +337,15 @@ def fetch_pr_paper_url(pr_url: str) -> str:
     files = json.loads(proc.stdout)
 
     paper_urls: list[str] = []
+    repo_url: str | None = None
     for f in files:
         for line in f.get("patch", "").splitlines():
             if not line.startswith("+"):
                 continue
+            if repo_url is None:
+                repo_field = re.match(r"\+\s*Repo:\s*(https?://\S+)", line)
+                if repo_field:
+                    repo_url = repo_field.group(1)
             for url in re.findall(r"https?://[^\s)>\]\"']+", line):
                 netloc = urllib.parse.urlparse(url).netloc.lstrip("www.")
                 is_pdf = url.lower().endswith(".pdf")
@@ -327,8 +361,13 @@ def fetch_pr_paper_url(pr_url: str) -> str:
     for preferred in ("doi.org", "arxiv.org", "zenodo.org"):
         for u in paper_urls:
             if preferred in u:
-                return u
-    return paper_urls[0]
+                return u, repo_url
+    return paper_urls[0], repo_url
+
+
+def fetch_pr_paper_url(pr_url: str) -> str:
+    """Backward-compatible wrapper: the paper URL of a PR, without the repo URL."""
+    return fetch_pr_urls(pr_url)[0]
 
 
 def resolve_to_pdf_url(url: str) -> str:
@@ -384,15 +423,26 @@ def download_pdf(paper_url: str) -> Path:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        sys.exit("Usage: check-paper.py <paper.pdf | github-pr-url>")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("target", help="paper PDF, or a GitHub endorsement-request PR URL")
+    parser.add_argument("--repo", help="open science repository to check for gate 4 (https://github.com/owner/repo)")
+    parser.add_argument("--no-repo-check", action="store_true", help="skip gate 4 even when a repository is known")
+    parser.add_argument(
+        "--traceability-threshold",
+        type=float,
+        default=check_repo.DEFAULT_TRACEABILITY_THRESHOLD,
+        help="fraction of the paper's empirical numbers that must be backed by the repository",
+    )
+    args = parser.parse_args()
 
-    arg = sys.argv[1]
+    arg = args.target
+    repo_url = args.repo
     tmp_pdf: Path | None = None
 
     if re.match(r"https://github\.com/[^/]+/[^/]+/pull/\d+", arg):
         print(f"Fetching paper from PR {arg} …", file=sys.stderr)
-        paper_url = fetch_pr_paper_url(arg)
+        paper_url, pr_repo_url = fetch_pr_urls(arg)
+        repo_url = repo_url or pr_repo_url
         tmp_pdf = download_pdf(paper_url)
         pdf_path = str(tmp_pdf)
     else:
@@ -406,8 +456,18 @@ def main() -> None:
         print(f"  {len(text):,} chars extracted, sending to {MODEL} …", file=sys.stderr)
 
         result = evaluate_paper(text)
-        render_result(result, pdf_path)
-        report_path = write_report(result, pdf_path)
+
+        repo_result = None
+        if repo_url and not args.no_repo_check:
+            print(f"Checking open science repository {repo_url} …", file=sys.stderr)
+            repo_result = check_repo.check_repo(
+                repo_url, text, claude_completions.completion, args.traceability_threshold
+            )
+        elif not repo_url:
+            print("  No repository given — gate 4 skipped (pass --repo to run it).", file=sys.stderr)
+
+        render_result(result, pdf_path, repo_result)
+        report_path = write_report(result, pdf_path, repo_result)
         print(f"  Report written to {report_path}", file=sys.stderr)
     finally:
         if tmp_pdf is not None:

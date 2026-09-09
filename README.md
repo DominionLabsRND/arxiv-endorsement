@@ -1,6 +1,6 @@
 # ArXiv Endorsement Protocol
 
-I receive many arXiv endorsement requests (and more due to Gen AI). I follow a structured protocol with three steps before endorsing. All three must pass before I can endorse.
+I receive many arXiv endorsement requests (and more due to Gen AI). I follow a structured protocol with four steps before endorsing. All four must pass before I can endorse.
 
 ## Why a Protocol?
 
@@ -33,6 +33,19 @@ At the same time, I want to be helpful to genuine researchers who lack an endors
 **Why:** Reading every paper in depth is time-consuming. To ensure consistent and thorough assessment, I pass the paper through an automated AI peer review. This checks for basic scientific soundness, clarity, and appropriateness for the claimed subject area.
 
 This is not a replacement for human peer review and does not guarantee the paper will be accepted at a journal or conference. It is a fast, reproducible filter to catch papers that are clearly not ready or not appropriate for arXiv.
+
+---
+
+## Gate 4: Repository ↔ Paper Correspondence
+
+**What I need:** Nothing extra from you beyond the `Repo` link — I run this step myself.
+
+**Why:** A repository link is worthless if the repository is unrelated to the paper, or if the paper's numbers cannot be found anywhere in it. So I check both:
+
+1. **Correspondence.** The repository must be the one behind the paper — same system, same experiments — not an empty placeholder or an unrelated project.
+2. **Traceability of every empirical number.** Every empirical fact in the paper (accuracies, runtimes, counts of bugs/subjects/repositories, p-values, table and figure values) must be either **present in a committed data file** or **recomputable by a committed script**. The repository is cloned, every claimed number is grepped for deterministically, and the result is reviewed against the file tree, the README and the scripts. At least 80% of the paper's empirical numbers must be backed this way.
+
+If your paper reports a number that lives nowhere but in the PDF, commit the data file it came from or the script that produces it.
 
 ---
 
