@@ -241,8 +241,10 @@ def render_result(result: dict, pdf_path: str, repo_result: dict | None = None) 
         for c in repo_result.get("claims", []):
             if c["status"] == "not_found":
                 print(f"        {WARN} {c['value']}{(' ' + c['unit']) if c['unit'] else ''} — {c['claim']} ({c['location']})")
-        if not v and repo_result.get("feedback"):
-            print(f"        → {repo_result['feedback']}")
+        if not v:
+            if repo_result.get("feedback"):
+                print(f"        → {repo_result['feedback']}")
+            print(f"        → {check_repo.RECOMMENDATIONS_URL}")
 
     print(f"\n{'─'*60}")
     if overall:

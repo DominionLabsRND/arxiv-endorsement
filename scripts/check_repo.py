@@ -42,6 +42,8 @@ DEFAULT_TRACEABILITY_THRESHOLD = 0.8
 # answer size.
 MAX_TOKENS = 32768
 
+RECOMMENDATIONS_URL = "https://github.com/monperrus/arxiv-endorsement/blob/main/recommendation-open-science.md"
+
 CLONE_TIMEOUT = 300
 MAX_SCAN_FILE_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_FILES = 5
@@ -524,9 +526,12 @@ def check_repo(
 
 def render_gate4(result: dict) -> str:
     """Markdown rendering of the gate 4 detail, shared by the report and PR comment."""
+    pointer = (
+        f"See [how to organize your paper and repository for verifiability]({RECOMMENDATIONS_URL})."
+    )
     lines = []
     if not result.get("repo_accessible"):
-        return f"> **Feedback:** {result.get('feedback','')}\n"
+        return f"> **Feedback:** {result.get('feedback','')} {pointer}\n"
 
     inv = result.get("inventory", {})
     lines.append(
@@ -552,6 +557,9 @@ def render_gate4(result: dict) -> str:
         lines.append("")
     if result.get("feedback"):
         lines.append(f"> **Feedback:** {result['feedback']}")
+        lines.append("")
+    if not result.get("verdict"):
+        lines.append(pointer)
         lines.append("")
     return "\n".join(lines)
 

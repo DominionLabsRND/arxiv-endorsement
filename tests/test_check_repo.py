@@ -172,3 +172,20 @@ def test_check_repo_end_to_end_with_stubbed_llm(fake_repo: Path, monkeypatch):
     assert result["claims"][0]["scan_hits"] == ["results/accuracy.csv"]
     assert "Gate 4" not in check_repo.render_gate4(result)  # detail only, no heading
     assert "results/accuracy.csv" in check_repo.render_gate4(result)
+    # a failing gate always points the author at the open science recommendations
+    assert check_repo.RECOMMENDATIONS_URL in check_repo.render_gate4(result)
+
+
+def test_unclonable_repository_also_points_at_the_recommendations():
+    result = {"repo_url": "u", "repo_accessible": False, "verdict": False, "feedback": "gone"}
+    assert check_repo.RECOMMENDATIONS_URL in check_repo.render_gate4(result)
+
+
+def test_passing_gate_does_not_lecture_the_author():
+    result = {
+        "repo_url": "u", "repo_accessible": True, "verdict": True, "feedback": "",
+        "inventory": {"n_files": 3, "n_scripts": 1, "n_data": 1, "has_license": True},
+        "n_claims": 1, "n_backed": 1, "traceability": 1.0, "threshold": 0.8,
+        "claims": [{"value": "1", "unit": "", "claim": "c", "status": "data_file", "evidence": ["a.csv"]}],
+    }
+    assert check_repo.RECOMMENDATIONS_URL not in check_repo.render_gate4(result)

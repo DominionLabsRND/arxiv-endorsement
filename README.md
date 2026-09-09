@@ -22,7 +22,7 @@ At the same time, I want to be helpful to genuine researchers who lack an endors
 
 **What I need:** A complete draft of the paper you intend to submit, in PDF form, plus a link to a public GitHub repository with the code and data behind it.
 
-**Why:** I cannot endorse a researcher in a vacuum. I need to skim the paper to assess whether it is a genuine scientific contribution appropriate for arXiv. Please send the full draft, not just an abstract or a title. An open science repository lets anyone verify and reproduce the work — it is mandatory, not optional.
+**Why:** I cannot endorse a researcher in a vacuum. I need to skim the paper to assess whether it is a genuine scientific contribution appropriate for arXiv. Please send the full draft, not just an abstract or a title. An open science repository lets anyone verify and reproduce the work — it is mandatory, not optional. See [Recommendations for Open Science Verifiability](recommendation-open-science.md) for how to prepare both.
 
 ---
 
@@ -46,6 +46,8 @@ This is not a replacement for human peer review and does not guarantee the paper
 2. **Traceability of every empirical number.** Every empirical fact in the paper (accuracies, runtimes, counts of bugs/subjects/repositories, p-values, table and figure values) must be either **present in a committed data file** or **recomputable by a committed script**. The repository is cloned, every claimed number is grepped for deterministically, and the result is reviewed against the file tree, the README and the scripts. At least 80% of the paper's empirical numbers must be backed this way.
 
 If your paper reports a number that lives nowhere but in the PDF, commit the data file it came from or the script that produces it.
+
+**Read this before submitting:** [Recommendations for Open Science Verifiability](recommendation-open-science.md) — how to organize the paper (hyperlink every number to the file behind it) and the repository (name result files after your tables, commit the results, one command to regenerate them) so this gate passes.
 
 ---
 
