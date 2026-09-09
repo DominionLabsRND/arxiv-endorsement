@@ -22,6 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPO = "monperrus/arxiv-endorsement"
 COMMENT_MARKER = "<!-- arxiv-endorsement-check -->"
+WRONG_SUBJECT_MARKER = "<!-- arxiv-endorsement-wrong-subject -->"
+WRONG_SUBJECT_MESSAGE = "[automated reply] we only endorse for cs.SE"
 BEST_EFFORT_COMPLETIONS = Path.home() / "bin" / "best-effort-completions.py"
 
 
@@ -57,9 +59,14 @@ def fetch_file_content(repo: str, path: str, ref: str) -> str:
     return base64.b64decode(proc.stdout.strip()).decode("utf-8")
 
 
-def already_commented(repo: str, pr_number: int) -> bool:
+def already_commented(repo: str, pr_number: int, marker: str = COMMENT_MARKER) -> bool:
     comments = gh_json("pr", "view", str(pr_number), "--repo", repo, "--json", "comments")["comments"]
-    return any(COMMENT_MARKER in c.get("body", "") for c in comments)
+    return any(marker in c.get("body", "") for c in comments)
+
+
+def close_pr(repo: str, pr_number: int, body: str) -> None:
+    post_comment(repo, pr_number, body)
+    subprocess.run(["gh", "pr", "close", str(pr_number), "--repo", repo], check=True)
 
 
 def parse_fields(text: str) -> dict[str, str]:
@@ -186,6 +193,19 @@ def process_pr(
         request_path.unlink(missing_ok=True)
 
     if errors:
+        # A wrong subject is not fixable by editing the request, so the PR is closed
+        # instead of being left open for a revision.
+        if validate_request_files.SUBJECT_ERROR in errors:
+            if already_commented(repo, number, WRONG_SUBJECT_MARKER):
+                print(f"PR #{number}: wrong subject, already answered", file=sys.stderr)
+                return
+            body = f"{WRONG_SUBJECT_MARKER}\n{WRONG_SUBJECT_MESSAGE}"
+            if dry_run:
+                print(f"\n--- PR #{number} (dry run, not closed) ---\n{body}\n")
+            else:
+                close_pr(repo, number, body)
+                print(f"PR #{number}: wrong subject, closed", file=sys.stderr)
+            return
         print(f"PR #{number}: invalid request, skipping ({'; '.join(errors)})", file=sys.stderr)
         return
 
@@ -232,6 +252,7 @@ def main() -> None:
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--dry-run", action="store_true", help="print comments instead of posting them")
     parser.add_argument("--update", action="store_true", help="re-run already-checked PRs and post a new check comment (does not edit prior comments)")
+    parser.add_argument("--pr", type=int, action="append", help="only process these PR numbers (repeatable)")
     parser.add_argument("--no-repo-check", action="store_true", help="skip gate 4 (open science repository)")
     parser.add_argument(
         "--traceability-threshold",
@@ -242,6 +263,8 @@ def main() -> None:
     args = parser.parse_args()
 
     for pr in list_open_prs(args.repo):
+        if args.pr and pr["number"] not in args.pr:
+            continue
         process_pr(
             args.repo, pr, args.dry_run, args.update,
             skip_repo=args.no_repo_check, threshold=args.traceability_threshold,

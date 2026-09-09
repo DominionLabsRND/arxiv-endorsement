@@ -11,6 +11,10 @@ from urllib.parse import urlparse
 
 VALID_SUBJECTS = {"cs.SE"}
 
+# A request for another arXiv subject can never be fixed by editing the file, so
+# review_prs.py matches on this exact error to close the pull request.
+SUBJECT_ERROR = "Subject must be cs.SE — I only endorse for cs.SE"
+
 REQUIRED_FIELDS = ("LinkedIn", "Paper", "Repo", "Subject", "EndorsementCode")
 # Requests filed before the Repo field became mandatory; grandfathered so
 # already-merged historical requests keep validating as-is.
@@ -110,7 +114,7 @@ def parse_request_file(path: Path) -> list[str]:
 
     subject = fields.get("Subject")
     if subject and subject not in VALID_SUBJECTS:
-        errors.append("Subject must be cs.SE — I only endorse for cs.SE")
+        errors.append(SUBJECT_ERROR)
 
     endorsement_code = fields.get("EndorsementCode")
     if endorsement_code and not ENDORSEMENT_CODE_RE.fullmatch(endorsement_code):
