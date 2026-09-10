@@ -1,5 +1,5 @@
 LinkedIn: https://www.linkedin.com/in/vivek-kumar-singh-a8930376
-Paper: https://github.com/vsingh45/churnbench/releases/download/v0.1-paper/churnbench-aixse.pdf
+Paper: https://github.com/vsingh45/churnbench/releases/download/v0.2-paper/churnbench-aixse.pdf
 Repo: https://github.com/vsingh45/churnbench
 Subject: cs.SE
 EndorsementCode: BMVPST
