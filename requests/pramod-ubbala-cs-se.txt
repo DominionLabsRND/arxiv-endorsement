@@ -1,0 +1,5 @@
+LinkedIn: https://www.linkedin.com/in/upramod
+Paper: https://github.com/upramod/invariant-compression-gate/blob/474fa8f/Invariant_Preserving_Tool_Output_Compression.pdf
+Repo: https://github.com/upramod/invariant-compression-gate
+Subject: cs.SE
+EndorsementCode: SHW3T8
