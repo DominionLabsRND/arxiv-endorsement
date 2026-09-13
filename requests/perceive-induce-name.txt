@@ -1,0 +1,5 @@
+LinkedIn: https://www.linkedin.com/in/stefan-ragland-a22215391/
+Paper: https://dmnlabs.org/research/perceive-induce-name.pdf
+Repo: https://github.com/DominionlabsRND/perceive-induce-name
+Subject: cs.LG
+EndorsementCode: 343CZ6
